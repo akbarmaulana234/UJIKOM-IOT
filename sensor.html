@@ -46,6 +46,11 @@
         .online-pulse {
             animation: pulse-green 1.5s infinite;
         }
+        .refresh-indicator {
+            font-size: 12px;
+            color: var(--gray);
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -155,48 +160,48 @@
     </main>
 </div>
 
-<script type="module">
-    import { auth, db } from './firebase-config.js';
-    import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-    import { ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
+<script>
+    // ==================== MOCK DATA FOR SENSOR PAGE ====================
     let currentData = {
-        suhu: '--',
-        kelembapan: '--',
-        tekanan: '--',
-        cahaya: '--'
+        suhu: 26,
+        kelembapan: 65,
+        tekanan: 1013,
+        cahaya: 180
     };
-
-    // Auth check
-    onAuthStateChanged(auth, (user) => {
-        if (!user && window.location.pathname.includes('sensor.html')) {
-            window.location.href = 'login.html';
+    
+    let updateInterval = null;
+    
+    // Generate fake data yang konsisten dengan dashboard
+    function generateFakeData() {
+        let newSuhu = currentData.suhu + (Math.random() - 0.5) * 0.6;
+        newSuhu = Math.min(35, Math.max(22, newSuhu));
+        
+        let newKelembapan = 75 - (newSuhu - 25) * 1.2 + (Math.random() - 0.5) * 3;
+        newKelembapan = Math.min(85, Math.max(45, newKelembapan));
+        
+        let newTekanan = currentData.tekanan + (Math.random() - 0.5) * 2;
+        newTekanan = Math.min(1030, Math.max(1005, newTekanan));
+        
+        let now = new Date();
+        let hour = now.getHours();
+        let baseLight = 0;
+        if (hour >= 6 && hour < 18) {
+            baseLight = 400 + Math.sin((hour - 12) * Math.PI / 12) * 300;
+        } else {
+            baseLight = 50 + Math.random() * 100;
         }
-        if (user && document.getElementById('userAvatar')) {
-            document.getElementById('userAvatar').textContent = user.email?.[0]?.toUpperCase() || 'U';
-        }
-    });
-
-    // Logout
-    document.getElementById('logoutBtn')?.addEventListener('click', async (e) => {
-        e.preventDefault();
-        await signOut(auth);
-        window.location.href = 'login.html';
-    });
-
-    function updateTrend(element, value, isHigherBetter = true) {
-        if (!element) return;
-        // This would compare with previous value, for now just set status
-        if (value === '--') {
-            element.textContent = '--';
-            return;
-        }
-        element.textContent = isHigherBetter ? '↑ Normal' : '↑ Normal';
-        element.className = 'trend trend-up';
+        let newCahaya = Math.min(900, Math.max(10, baseLight + (Math.random() - 0.5) * 50));
+        
+        return {
+            suhu: Math.round(newSuhu * 10) / 10,
+            kelembapan: Math.round(newKelembapan),
+            tekanan: Math.round(newTekanan),
+            cahaya: Math.round(newCahaya)
+        };
     }
-
+    
     function updateUI(data) {
-        // Update main cards
+        // Update stat cards
         document.getElementById('statSuhu').innerHTML = `${data.suhu}<span style="font-size:14px;">°C</span>`;
         document.getElementById('statKelembapan').innerHTML = `${data.kelembapan}<span style="font-size:14px;">%</span>`;
         document.getElementById('statTekanan').innerHTML = `${data.tekanan}<span style="font-size:14px;"> hPa</span>`;
@@ -208,82 +213,92 @@
         document.getElementById('detailTekanan').innerHTML = `${data.tekanan}<span class="sensor-unit">hPa</span>`;
         
         // Update timestamps
-        const now = new Date().toLocaleTimeString('id-ID');
-        document.getElementById('lastUpdateSuhu').textContent = `Last update: ${now}`;
-        document.getElementById('lastUpdateCahaya').textContent = `Last update: ${now}`;
-        document.getElementById('lastUpdateTekanan').textContent = `Last update: ${now}`;
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('id-ID');
+        document.getElementById('lastUpdateSuhu').textContent = `Last update: ${timeStr}`;
+        document.getElementById('lastUpdateCahaya').textContent = `Last update: ${timeStr}`;
+        document.getElementById('lastUpdateTekanan').textContent = `Last update: ${timeStr}`;
         
         // Update trends
-        updateTrend(document.getElementById('trendSuhu'), data.suhu);
-        updateTrend(document.getElementById('trendKelembapan'), data.kelembapan);
-        updateTrend(document.getElementById('trendTekanan'), data.tekanan);
-        updateTrend(document.getElementById('trendCahaya'), data.cahaya, false);
+        updateTrend('trendSuhu', data.suhu, 24, 30);
+        updateTrend('trendKelembapan', data.kelembapan, 50, 75);
+        updateTrend('trendTekanan', data.tekanan, 1008, 1020);
+        updateTrend('trendCahaya', data.cahaya, 100, 600);
         
         // Update device table
-        updateDeviceTable(data, now);
+        updateDeviceTable(data, timeStr);
+    }
+    
+    function updateTrend(elementId, value, minNormal, maxNormal) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        
+        if (value > maxNormal) {
+            el.innerHTML = '↑ Tinggi';
+            el.style.color = '#ef4444';
+        } else if (value < minNormal) {
+            el.innerHTML = '↓ Rendah';
+            el.style.color = '#f59e0b';
+        } else {
+            el.innerHTML = '✓ Normal';
+            el.style.color = '#10b981';
+        }
     }
     
     function updateDeviceTable(data, timestamp) {
         const tbody = document.getElementById('sensorTable');
         const devices = [
-            { name: 'ESP32 - Ruang Utama', type: 'DHT22', value: `${data.suhu}°C / ${data.kelembapan}%`, status: 'OK' },
-            { name: 'ESP8266 - Outdoor', type: 'LDR', value: `${data.cahaya} lx`, status: data.cahaya !== '--' ? 'OK' : 'WARN' },
-            { name: 'ESP32 - Lab', type: 'BMP280', value: `${data.tekanan} hPa`, status: data.tekanan !== '--' ? 'OK' : 'WARN' },
-            { name: 'ESP32 - Pintu', type: 'PIR (Motion)', value: 'Tidak terdeteksi', status: 'OK' }
+            { name: 'ESP32 - Ruang Utama', type: 'DHT22', value: `${data.suhu}°C / ${data.kelembapan}%`, status: 'OK', statusClass: 'success' },
+            { name: 'ESP8266 - Outdoor', type: 'LDR', value: `${data.cahaya} lx`, status: data.cahaya > 50 ? 'OK' : 'WARN', statusClass: data.cahaya > 50 ? 'success' : 'warning' },
+            { name: 'ESP32 - Lab Sensor', type: 'BMP280', value: `${data.tekanan} hPa`, status: 'OK', statusClass: 'success' },
+            { name: 'ESP32 - Pintu Utama', type: 'PIR (Motion)', value: 'Aktif', status: 'OK', statusClass: 'success' }
         ];
         
-        document.getElementById('sensorCount').textContent = `${devices.length} Sensor`;
+        document.getElementById('sensorCount').textContent = `${devices.length} Sensor Aktif`;
         
         tbody.innerHTML = devices.map(device => `
-            <tr>
+            <tr style="animation: fadeInUp 0.3s ease-out;">
                 <td><strong>${device.name}</strong></td>
                 <td>${device.type}</td>
                 <td>${device.value}</td>
                 <td>${timestamp}</td>
-                <td><span class="status-badge ${device.status === 'OK' ? 'success' : 'warning'}">${device.status}</span></td>
+                <td><span class="status-badge ${device.statusClass}">${device.status}</span></td>
             </tr>
         `).join('');
     }
     
-    function loadDummyData() {
-        const dummy = {
-            suhu: 28,
-            kelembapan: 65,
-            tekanan: 1013,
-            cahaya: 180
-        };
-        currentData = dummy;
-        updateUI(dummy);
+    function startSimulation() {
+        if (updateInterval) clearInterval(updateInterval);
+        
+        updateInterval = setInterval(() => {
+            const newData = generateFakeData();
+            currentData = newData;
+            updateUI(currentData);
+        }, 3000);
     }
     
-    // Listen to Firebase
-    const sensorRef = ref(db, 'sensor');
-    onValue(sensorRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-            currentData = {
-                suhu: data.suhu || '--',
-                kelembapan: data.kelembapan || '--',
-                tekanan: data.tekanan || '--',
-                cahaya: data.cahaya || '--'
-            };
-            updateUI(currentData);
-        } else {
-            loadDummyData();
-        }
-    }, () => {
-        loadDummyData();
+    // Auth check (mock)
+    const userAvatar = document.getElementById('userAvatar');
+    if (userAvatar) userAvatar.textContent = 'U';
+    
+    document.getElementById('logoutBtn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.location.href = 'login.html';
     });
     
-    // Refresh button
     document.getElementById('refreshBtn')?.addEventListener('click', () => {
-        // Force refresh
-        const connectionStatus = document.getElementById('connectionStatus');
-        connectionStatus.textContent = 'Memuat...';
-        setTimeout(() => {
-            connectionStatus.textContent = 'Terhubung';
-        }, 1000);
+        const newData = generateFakeData();
+        currentData = newData;
+        updateUI(currentData);
+        
+        const statusPill = document.querySelector('.status-pill');
+        statusPill.style.opacity = '0.7';
+        setTimeout(() => { statusPill.style.opacity = '1'; }, 500);
     });
+    
+    // Initialize
+    startSimulation();
+    updateUI(currentData);
 </script>
 </body>
 </html>
